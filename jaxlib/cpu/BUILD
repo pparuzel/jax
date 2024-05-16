@@ -61,7 +61,9 @@ pybind_extension(
     features = ["-use_header_modules"],
     module_name = "_lapack",
     pytype_srcs = [
-        "_lapack.pyi",
+        "_lapack/__init__.pyi",
+        "_lapack/eig/__init__.pyi",
+        "_lapack/svd/__init__.pyi",
     ],
     deps = [
         ":lapack_kernels",

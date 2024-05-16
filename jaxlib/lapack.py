@@ -16,6 +16,7 @@
 # via CustomCallWithLayout.
 
 from collections.abc import Sequence
+from enum import Enum
 
 import numpy as np
 
@@ -30,6 +31,7 @@ from .hlo_helpers import (
     DimensionSize, ShapeTypePair, mk_result_types_and_shapes,
 )
 from .cpu import _lapack
+from .cpu._lapack import eig, svd
 
 for _name, _value in _lapack.registrations().items():
   xla_client.register_custom_call_target(_name, _value, platform="cpu",
@@ -38,6 +40,37 @@ for _name, _value in _lapack.registrations().items():
 
 def char_attr(c):
   return ir.IntegerAttr.get(ir.IntegerType.get_unsigned(8), ord(c))
+
+
+def enum_to_char_attr(e: Enum):
+  return ir.IntegerAttr.get(ir.IntegerType.get_unsigned(8), e.value)
+
+
+def matrix_side_attr(*, left_side: bool):
+  return char_attr('L' if left_side else 'R')
+
+
+def matrix_uplo_attr(*, lower: bool):
+  return char_attr('L' if lower else 'U')
+
+
+def matrix_transpose_attr(*, transpose: bool, conjugate: bool):
+  return char_attr(('C' if conjugate else 'T') if transpose else 'N')
+
+
+def matrix_diagonal_attr(*, unit_diag: bool):
+  return char_attr('U' if unit_diag else 'N')
+
+
+def svd_computation_attr(*, compute_uv: bool, full_matrices: bool = False):
+  mode = 'A'
+  if not compute_uv:
+    if full_matrices:
+      raise NotImplementedError(f'Cannot compute `full_matrices` when `compute_uv` is False')
+    mode = 'N'
+  elif not full_matrices:
+    mode = 'S'
+  return char_attr(mode)
 
 
 # TODO(phawkins): it would be nice to avoid duplicating code for each type.
@@ -82,10 +115,10 @@ def trsm_hlo(dtype, alpha, a, b,
       operand_output_aliases={1: 0},
       result_shapes=result_shapes,
       backend_config={
-        'side': char_attr('L' if left_side else 'R'),
-        'uplo': char_attr('L' if lower else 'U'),
-        'trans_x': char_attr(('C' if conj_a else 'T') if trans_a else 'N'),
-        'diag': char_attr('U' if diag else 'N'),
+        'side': matrix_side_attr(left_side=left_side),
+        'uplo': matrix_uplo_attr(lower=lower),
+        'trans_x': matrix_transpose_attr(transpose=trans_a, conjugate=conj_a),
+        'diag': matrix_diagonal_attr(unit_diag=diag),
       },
       api_version=4,
   ).results
@@ -280,11 +313,7 @@ def potrf_hlo(dtype, a: ir.Value, *, lower=False,
     raise NotImplementedError(f"Unsupported dtype {dtype}")
   batch_dims_vals = a_shape_vals[:-2]
   num_bd = len(batch_dims_vals)
-  batch_size_val = hlo_s32(1)
-  for b_v in batch_dims_vals:
-    batch_size_val = hlo.multiply(batch_size_val, ensure_hlo_s32(b_v))
 
-  scalar_layout = []
   layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
   info_layout = tuple(range(num_bd - 1, -1, -1))
 
@@ -296,11 +325,15 @@ def potrf_hlo(dtype, a: ir.Value, *, lower=False,
   out = custom_call(
       fn,
       result_types=result_types,
-      operands=[hlo_s32(int(lower)), batch_size_val, ensure_hlo_s32(n), a],
-      operand_layouts=[scalar_layout] * 3 + [layout],
+      operands=[a],
+      operand_layouts=[layout],
       result_layouts=[layout, info_layout],
-      operand_output_aliases={3: 0},
+      operand_output_aliases={0: 0},
       result_shapes=result_shapes,
+      backend_config={
+        'uplo': matrix_uplo_attr(lower=lower),
+      },
+      api_version=4,
   ).results
   return out[:2]
 
@@ -317,79 +350,79 @@ def gesdd_hlo(dtype, a: ir.Value, *, full_matrices=True, compute_uv=True,
   assert type(n) is int
   batch_dims_vals = a_shape_vals[:-2]
   num_bd = len(batch_dims_vals)
-  batch_size_val = hlo_s32(1)
-  for b_v in batch_dims_vals:
-    batch_size_val = hlo.multiply(batch_size_val, ensure_hlo_s32(b_v))
 
+  mode_attr = svd_computation_attr(
+    compute_uv=compute_uv,
+    full_matrices=full_matrices)
+  mode_value = svd.ComputationMode(mode_attr.value)
   i32_type = ir.IntegerType.get_signless(32)
   workspace: list[ShapeTypePair]
   if dtype == np.float32:
     fn = "lapack_sgesdd"
     singular_vals_type = ir.F32Type.get()
-    lwork = _lapack.sgesdd_work_size(m, n, compute_uv, full_matrices)
+    lwork = _lapack.sgesdd_work_size(m, n, mode_value)
     workspace = [
         ([_lapack.gesdd_iwork_size(m, n)], i32_type),
         ([lwork], a_type.element_type),
     ]
-    workspace_layouts = [[0], [0]]
   elif dtype == np.float64:
     fn = "lapack_dgesdd"
     singular_vals_type = ir.F64Type.get()
-    lwork = _lapack.dgesdd_work_size(m, n, compute_uv, full_matrices)
+    lwork = _lapack.dgesdd_work_size(m, n, mode_value)
     workspace = [
         ([_lapack.gesdd_iwork_size(m, n)], i32_type),
         ([lwork], a_type.element_type),
     ]
-    workspace_layouts = [[0], [0]]
   elif dtype == np.complex64:
     fn = "lapack_cgesdd"
     singular_vals_type = ir.F32Type.get()
-    lwork = _lapack.cgesdd_work_size(m, n, compute_uv, full_matrices)
+    lwork = _lapack.cgesdd_work_size(m, n, mode_value)
     workspace = [
         ([_lapack.gesdd_iwork_size(m, n)], i32_type),
-        ([_lapack.cgesdd_rwork_size(m, n, int(compute_uv))], ir.F32Type.get()),
+        ([_lapack.gesdd_rwork_size(m, n, mode_value)], ir.F32Type.get()),
         ([lwork], a_type.element_type),
     ]
-    workspace_layouts = [[0], [0], [0]]
   elif dtype == np.complex128:
     fn = "lapack_zgesdd"
     singular_vals_type = ir.F64Type.get()
-    lwork = _lapack.zgesdd_work_size(m, n, compute_uv, full_matrices)
+    lwork = _lapack.zgesdd_work_size(m, n, mode_value)
     workspace = [
         ([_lapack.gesdd_iwork_size(m, n)], i32_type),
-        ([_lapack.cgesdd_rwork_size(m, n, int(compute_uv))], ir.F64Type.get()),
+        ([_lapack.gesdd_rwork_size(m, n, mode_value)], ir.F64Type.get()),
         ([lwork], a_type.element_type),
     ]
-    workspace_layouts = [[0], [0], [0]]
   else:
     raise NotImplementedError(f"Unsupported dtype {dtype}")
 
-  scalar_layout = []
   layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
-
   shape_type_pairs: Sequence[ShapeTypePair] = [
-    (a_shape_vals, a_type.element_type),
-    (batch_dims_vals + (min(m, n),), singular_vals_type),
-    (batch_dims_vals + (m, m if full_matrices else min(m, n)), a_type.element_type),
-    (batch_dims_vals + (n if full_matrices else min(m, n), n), a_type.element_type),
-    (batch_dims_vals, i32_type),
-  ] + workspace
+    (a_shape_vals, a_type.element_type),  # x_out
+    (batch_dims_vals + (min(m, n),), singular_vals_type),  # s
+    (batch_dims_vals + (m, m if full_matrices else min(m, n)), a_type.element_type),  # u
+    (batch_dims_vals + (n if full_matrices else min(m, n), n), a_type.element_type),  # vt
+    (batch_dims_vals, i32_type),  # info
+    *workspace,
+  ]
   result_types, result_shapes = mk_result_types_and_shapes(shape_type_pairs)
   out = custom_call(
       fn,
       result_types=result_types,
-      operands=[hlo_s32(int(full_matrices)), hlo_s32(int(compute_uv)), batch_size_val,
-       hlo_s32(m), hlo_s32(n), hlo_s32(lwork), a],
-      operand_layouts=[scalar_layout] * 6 + [layout],
+      operands=[a],
+      operand_layouts=[layout],
       result_layouts=[
           layout,
           (num_bd,) + tuple(range(num_bd - 1, -1, -1)),
           layout,
           layout,
           tuple(range(num_bd - 1, -1, -1)),
-      ] + workspace_layouts,
-      operand_output_aliases={6: 0},
-      result_shapes=result_shapes
+          *[[0]] * len(workspace),
+      ],
+      operand_output_aliases={0: 0},
+      result_shapes=result_shapes,
+      backend_config={
+        'mode': mode_attr,
+      },
+      api_version=4,
   ).results
   return out[1:5]
 
@@ -408,6 +441,7 @@ def syevd_hlo(dtype, a: ir.Value,
 
   batch_dims_vals = a_shape_vals[:-2]
   num_bd = len(a_shape_vals) - 2
+  mode = enum_to_char_attr(eig.ComputationMode.kComputeEigenvectors)
 
   i32_type = ir.IntegerType.get_signless(32)
   workspace: list[ShapeTypePair]
@@ -444,33 +478,34 @@ def syevd_hlo(dtype, a: ir.Value,
   else:
     raise NotImplementedError(f"Unsupported dtype {dtype}")
 
-  batch_size_val = hlo_s32(1)
-  for b_v in batch_dims_vals:
-    batch_size_val = hlo.multiply(batch_size_val, ensure_hlo_s32(b_v))
-
-  scalar_layout = []
-  shape_layout = [0]
-  workspace_layouts = [shape_layout] * len(workspace)
+  workspace_layouts = [[0]] * len(workspace)
   layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
 
   result_types, result_shapes = mk_result_types_and_shapes(
       [(a_shape_vals, a_type.element_type),
        (batch_dims_vals + (n,),  eigvals_type),
-       (batch_dims_vals, i32_type)] + workspace
+       (batch_dims_vals, i32_type),
+       *workspace]
   )
 
   out = custom_call(
       fn,
       result_types=result_types,
-      operands=[hlo_s32(1 if lower else 0), batch_size_val, ensure_hlo_s32(n), a],
-      operand_layouts=[scalar_layout] * 3 + [layout],
+      operands=[a],
+      operand_layouts=[layout],
       result_layouts=[
           layout,
           tuple(range(num_bd, -1, -1)),
           tuple(range(num_bd - 1, -1, -1)),
-      ] + workspace_layouts,
-      operand_output_aliases={3: 0},
+          *workspace_layouts,
+      ],
+      operand_output_aliases={0: 0},
       result_shapes=result_shapes,
+      backend_config={
+        'uplo': matrix_uplo_attr(lower=lower),
+        'mode': mode,
+      },
+      api_version=4,
   ).results
   return out[:3]
 
@@ -490,8 +525,13 @@ def geev_hlo(dtype, input, *,
 
   layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
 
-  jobvl_c = ord('V' if jobvl else 'N')
-  jobvr_c = ord('V' if jobvr else 'N')
+  compute_left = (eig.ComputationMode.kComputeEigenvectors
+                  if jobvl else
+                  eig.ComputationMode.kNoEigenvectors)
+
+  compute_right = (eig.ComputationMode.kComputeEigenvectors
+                   if jobvr else
+                   eig.ComputationMode.kNoEigenvectors)
 
   i32_type = ir.IntegerType.get_signless(32)
   f32_type = ir.F32Type.get()
@@ -536,34 +576,33 @@ def geev_hlo(dtype, input, *,
   else:
     raise NotImplementedError(f"Unsupported dtype {dtype}")
 
-  scalar_layout = []
   info_layout = tuple(range(num_bd - 1, -1, -1))
-
-  batch_size_val = hlo_s32(1)
-  for b_v in batch_dims_vals:
-    batch_size_val = hlo.multiply(batch_size_val, ensure_hlo_s32(b_v))
-
-  shape_type_pairs: Sequence[ShapeTypePair] = workspaces + eigvals + [
+  shape_type_pairs: Sequence[ShapeTypePair] = [
+      *eigvals,
       (input_shape_vals, eigvecs_type),
       (input_shape_vals, eigvecs_type),
-      (batch_dims_vals, i32_type)]
+      (batch_dims_vals, i32_type),
+      *workspaces,
+  ]
   result_types, result_shapes = mk_result_types_and_shapes(shape_type_pairs)
   out = custom_call(
       fn,
       result_types=result_types,
-      operands=[batch_size_val, ensure_hlo_s32(n),
-       hlo_u8(jobvl_c),
-       hlo_u8(jobvr_c),
-       input],
-      operand_layouts=[scalar_layout] * 4 + [layout],
-      result_layouts=(workspace_layouts + eigvals_layouts + [layout] * 2 +
-                      [info_layout]),
+      operands=[input],
+      operand_layouts=[layout],
+      result_layouts=(eigvals_layouts + [layout] * 2 +
+                      [info_layout] + workspace_layouts),
       result_shapes=result_shapes,
+      backend_config={
+        'compute_left': enum_to_char_attr(compute_left),
+        'compute_right': enum_to_char_attr(compute_right),
+      },
+      api_version=4,
   ).results
   if real:
-    return (hlo.complex(out[3], out[4]), out[5], out[6], out[7])
+    return (hlo.complex(out[0], out[1]), out[2], out[3], out[4])
   else:
-    return out[2:6]
+    return out[0:4]
 
 # # gees : Schur factorization
 

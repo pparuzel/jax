@@ -55,7 +55,7 @@ inline T CastNoOverflow(int64_t value) {
 }
 
 template <typename T>
-std::tuple<int64_t, int64_t, int64_t> SplitBatchDims(ffi::Span<T> dims) {
+std::tuple<int64_t, int64_t, int64_t> SplitBatch2D(ffi::Span<T> dims) {
   if (dims.size() < 2) {
     throw std::invalid_argument("Matrix must have at least 2 dimensions");
   }
@@ -67,7 +67,7 @@ std::tuple<int64_t, int64_t, int64_t> SplitBatchDims(ffi::Span<T> dims) {
 
 template <ffi::DataType dtype>
 void CopyIfDiffBuffer(ffi::Buffer<dtype> x, ffi::ResultBuffer<dtype> x_out) {
-  auto [batch_count, x_rows, x_cols] = SplitBatchDims(x.dimensions);
+  auto [batch_count, x_rows, x_cols] = SplitBatch2D(x.dimensions);
   if (x.data != x_out->data) {
     const auto x_size = batch_count * x_rows * x_cols;
     std::copy_n(x.data, x_size, x_out->data);
@@ -116,7 +116,7 @@ ffi::Error TriMatrixEquationSolver<dtype>::Kernel(
     MatrixParams::Diag diag) {
   CopyIfDiffBuffer(y, y_out);
 
-  auto [batch_count, y_rows, y_cols] = SplitBatchDims(y.dimensions);
+  auto [batch_count, y_rows, y_cols] = SplitBatch2D(y.dimensions);
   auto* y_out_data = y_out->data;
   lapack_int x_leading_dim_v =
       side == MatrixParams::Side::kLeft ? y_rows : y_cols;
@@ -154,7 +154,7 @@ ffi::Error LuDecomposition<dtype>::Kernel(
     ffi::Buffer<dtype> x, ffi::ResultBuffer<dtype> x_out,
     ffi::ResultBuffer<LapackIntDtype> ipiv,
     ffi::ResultBuffer<LapackIntDtype> info) {
-  auto [batch_count, x_rows, x_cols] = SplitBatchDims(x.dimensions);
+  auto [batch_count, x_rows, x_cols] = SplitBatch2D(x.dimensions);
   auto* x_out_data = x_out->data;
   auto* ipiv_data = ipiv->data;
   auto* info_data = info->data;
@@ -187,9 +187,10 @@ template struct LuDecomposition<ffi::DataType::C128>;
 template <ffi::DataType dtype>
 ffi::Error QrFactorization<dtype>::Kernel(
     ffi::Buffer<dtype> x, ffi::ResultBuffer<dtype> x_out,
-    ffi::ResultBuffer<dtype> tau, ffi::ResultBuffer<LapackIntDtype> info,
+    ffi::ResultBuffer<dtype> tau,
+    ffi::ResultBuffer<LapackIntDtype> info,
     ffi::ResultBuffer<dtype> work) {
-  auto [batch_count, x_rows, x_cols] = SplitBatchDims(x.dimensions);
+  auto [batch_count, x_rows, x_cols] = SplitBatch2D(x.dimensions);
   auto* x_out_data = x_out->data;
   auto* tau_data = tau->data;
   auto* info_data = info->data;
@@ -240,7 +241,7 @@ ffi::Error OrthogonalQr<dtype>::Kernel(ffi::Buffer<dtype> x,
                                        ffi::ResultBuffer<dtype> x_out,
                                        ffi::ResultBuffer<LapackIntDtype> info,
                                        ffi::ResultBuffer<dtype> work) {
-  auto [batch_count, x_rows, x_cols] = SplitBatchDims(x.dimensions);
+  auto [batch_count, x_rows, x_cols] = SplitBatch2D(x.dimensions);
   auto* tau_data = tau.data;
   auto* x_out_data = x_out->data;
   auto* info_data = info->data;
@@ -290,7 +291,7 @@ template <ffi::DataType dtype>
 ffi::Error CholeskyFactorization<dtype>::Kernel(
     ffi::Buffer<dtype> x, MatrixParams::UpLo uplo,
     ffi::ResultBuffer<dtype> x_out, ffi::ResultBuffer<LapackIntDtype> info) {
-  auto [batch_count, x_rows, x_cols] = SplitBatchDims(x.dimensions);
+  auto [batch_count, x_rows, x_cols] = SplitBatch2D(x.dimensions);
   auto* x_out_data = x_out->data;
   auto* info_data = info->data;
 
@@ -331,13 +332,14 @@ static ffi::Error SvdKernel(
     ffi::ResultBuffer<dtype> u, ffi::ResultBuffer<dtype> vt,
     ffi::ResultBuffer<LapackIntDtype> info,
     ffi::ResultBuffer<LapackIntDtype> iwork, ffi::ResultBuffer<dtype> work,
-    svd::ComputationMode mode, RealBufferForComplexOrNull<dtype> rwork) {
+    svd::ComputationMode mode,
+    RealBufferForComplexOrNull<dtype> rwork) {
   if (mode == svd::ComputationMode::kComputeVtOverwriteXPartialU) [[unlikely]] {
     return ffi::Error(
         XLA_FFI_Error_Code_UNIMPLEMENTED,
         "Current implementation does not support this computation mode");
   }
-  auto [batch_count, x_rows, x_cols] = SplitBatchDims(x.dimensions);
+  auto [batch_count, x_rows, x_cols] = SplitBatch2D(x.dimensions);
   auto* x_out_data = x_out->data;
   auto* singular_values_data = singular_values->data;
   auto* u_data = u->data;
@@ -354,16 +356,34 @@ static ffi::Error SvdKernel(
   auto workspace_dim_v = CastNoOverflow<lapack_int>(work->dimensions.back());
   auto x_leading_dim_v = x_rows_v;
   auto u_leading_dim_v = x_rows_v;
+
   auto min_dim = std::min(x_rows_v, x_cols_v);
-  auto u_relative_dim =
-      mode == svd::ComputationMode::kComputeFullUVt ? x_rows_v : min_dim;
-  auto vt_leading_dim_v =
-      mode == svd::ComputationMode::kComputeFullUVt ? x_cols_v : min_dim;
+  assert(singular_values->dimensions.size() >= 1);
+  assert(singular_values->dimensions.back() == std::min(x_rows, x_cols));
+  assert(u->dimensions.size() >= 2);
+  assert(vt->dimensions.size() >= 2);
+
+  auto u_dims = u->dimensions.last(2);
+  assert(u_dims.front() == x_rows);
+  assert(u_dims.back() == (mode == svd::ComputationMode::kComputeFullUVt ? x_rows_v : min_dim));
+
+  auto vt_dims = vt->dimensions.last(2);
+  assert(vt_dims.front() == (mode == svd::ComputationMode::kComputeFullUVt ? x_cols_v : min_dim));
+  assert(vt_dims.back() == x_cols);
+  // auto u_relative_dim =
+  //     mode == svd::ComputationMode::kComputeFullUVt ? x_rows_v : min_dim;
+  // auto vt_leading_dim_v =
+  //     mode == svd::ComputationMode::kComputeFullUVt ? x_cols_v : min_dim;
+  auto vt_leading_dim_v = CastNoOverflow<lapack_int>(vt_dims.front());
 
   const int64_t x_out_step{x_rows * x_cols};
-  const int64_t singular_values_step{std::min(x_rows, x_cols)};
-  const int64_t u_step{x_rows * u_relative_dim};
-  const int64_t vt_step{vt_leading_dim_v * x_cols};
+  // const int64_t singular_values_step{std::min(x_rows, x_cols)};
+  // const int64_t u_step{x_rows * u_relative_dim};
+  // const int64_t vt_step{vt_leading_dim_v * x_cols};
+  const int64_t singular_values_step{singular_values->dimensions.back()};
+  const int64_t u_step{u_dims.front() * u_dims.back()};
+  const int64_t vt_step{vt_leading_dim_v * vt_dims.back()};
+
   for (int64_t i = 0; i < batch_count; ++i) {
     if constexpr (ffi::IsComplexType<dtype>()) {
       svd::SVDType<dtype>::fn(&mode_v, &x_rows_v, &x_cols_v, x_out_data,
@@ -421,7 +441,8 @@ template <ffi::DataType dtype>
 ffi::Error SingularValueDecomposition<dtype>::Kernel(
     ffi::Buffer<dtype> x, ffi::ResultBuffer<dtype> x_out,
     ffi::ResultBuffer<dtype> singular_values, ffi::ResultBuffer<dtype> u,
-    ffi::ResultBuffer<dtype> vt, ffi::ResultBuffer<LapackIntDtype> info,
+    ffi::ResultBuffer<dtype> vt,
+    ffi::ResultBuffer<LapackIntDtype> info,
     ffi::ResultBuffer<LapackIntDtype> iwork, ffi::ResultBuffer<dtype> work,
     svd::ComputationMode mode) {
   return internal::SvdKernel<dtype>(x, x_out, singular_values, u, vt, info,
@@ -435,8 +456,7 @@ ffi::Error SingularValueDecompositionComplex<dtype>::Kernel(
     ffi::ResultBuffer<dtype> u, ffi::ResultBuffer<dtype> vt,
     ffi::ResultBuffer<LapackIntDtype> info,
     ffi::ResultBuffer<ffi::ToReal(dtype)> rwork,
-    ffi::ResultBuffer<LapackIntDtype> iwork, ffi::ResultBuffer<dtype> work,
-    svd::ComputationMode mode) {
+    ffi::ResultBuffer<LapackIntDtype> iwork, ffi::ResultBuffer<dtype> work, svd::ComputationMode mode) {
   return internal::SvdKernel<dtype>(x, x_out, singular_values, u, vt, info,
                                     iwork, work, mode, rwork);
 }
@@ -498,9 +518,10 @@ template <ffi::DataType dtype>
 ffi::Error EigenvalueDecompositionSymmetric<dtype>::Kernel(
     ffi::Buffer<dtype> x, MatrixParams::UpLo uplo,
     ffi::ResultBuffer<dtype> x_out, ffi::ResultBuffer<dtype> eigenvalues,
+    ffi::ResultBuffer<LapackIntDtype> info,
     ffi::ResultBuffer<dtype> work, ffi::ResultBuffer<LapackIntDtype> iwork,
-    ffi::ResultBuffer<LapackIntDtype> info, eig::ComputationMode mode) {
-  auto [batch_count, x_rows, x_cols] = SplitBatchDims(x.dimensions);
+    eig::ComputationMode mode) {
+  auto [batch_count, x_rows, x_cols] = SplitBatch2D(x.dimensions);
   auto* x_out_data = x_out->data;
   auto* eigenvalues_data = eigenvalues->data;
   auto* info_data = info->data;
@@ -556,10 +577,10 @@ ffi::Error EigenvalueDecompositionHermitian<dtype>::Kernel(
     ffi::Buffer<dtype> x, MatrixParams::UpLo uplo,
     ffi::ResultBuffer<dtype> x_out,
     ffi::ResultBuffer<ffi::ToReal(dtype)> eigenvalues,
+    ffi::ResultBuffer<LapackIntDtype> info,
     ffi::ResultBuffer<dtype> work, ffi::ResultBuffer<ffi::ToReal(dtype)> rwork,
-    ffi::ResultBuffer<LapackIntDtype> iwork,
-    ffi::ResultBuffer<LapackIntDtype> info, eig::ComputationMode mode) {
-  auto [batch_count, x_rows, x_cols] = SplitBatchDims(x.dimensions);
+    ffi::ResultBuffer<LapackIntDtype> iwork, eig::ComputationMode mode) {
+  auto [batch_count, x_rows, x_cols] = SplitBatch2D(x.dimensions);
   auto* x_out_data = x_out->data;
   auto* eigenvalues_data = eigenvalues->data;
   auto* info_data = info->data;
@@ -625,22 +646,25 @@ static void UnpackEigenvectors(lapack_int n, const T* eigenvals_imag,
 template <ffi::DataType dtype>
 ffi::Error EigenvalueDecomposition<dtype>::Kernel(
     ffi::Buffer<dtype> x, eig::ComputationMode compute_left,
-    eig::ComputationMode compute_right, ffi::ResultBuffer<dtype> x_out,
+    eig::ComputationMode compute_right,
     ffi::ResultBuffer<dtype> eigvals_real,
     ffi::ResultBuffer<dtype> eigvals_imag,
-    ffi::ResultBuffer<ffi::ToReal(dtype)> eigvecs_left,
-    ffi::ResultBuffer<ffi::ToReal(dtype)> eigvecs_right,
-    ffi::ResultBuffer<ffi::ToComplex(dtype)> eigvecs_left_out,
-    ffi::ResultBuffer<ffi::ToComplex(dtype)> eigvecs_right_out,
-    ffi::ResultBuffer<LapackIntDtype> info) {
-  auto [batch_count, x_rows, x_cols] = SplitBatchDims(x.dimensions);
-  if (x_rows != x_cols) {
+    ffi::ResultBuffer<ffi::ToComplex(dtype)> eigvecs_left,
+    ffi::ResultBuffer<ffi::ToComplex(dtype)> eigvecs_right,
+    ffi::ResultBuffer<LapackIntDtype> info,
+    ffi::ResultBuffer<dtype> x_work,
+    ffi::ResultBuffer<ffi::ToReal(dtype)> work_eigvecs_left,
+    ffi::ResultBuffer<ffi::ToReal(dtype)> work_eigvecs_right) {
+  auto [batch_count, x_rows, x_cols] = SplitBatch2D(x.dimensions);
+  if (x_rows != x_cols) [[unlikely]] {
     throw std::invalid_argument(
         "Eigenvalue decomposition requires a square matrix");
   }
 
   const auto* x_data = x.data;
-  auto* x_out_data = x_out->data;
+  auto* x_work_data = x_work->data;
+  auto* work_eigvecs_left_data = work_eigvecs_left->data;
+  auto* work_eigvecs_right_data = work_eigvecs_right->data;
   auto* eigvecs_left_data = eigvecs_left->data;
   auto* eigvecs_right_data = eigvecs_right->data;
   auto* eigvals_real_data = eigvals_real->data;
@@ -670,22 +694,22 @@ ffi::Error EigenvalueDecomposition<dtype>::Kernel(
   for (int64_t i = 0; i < batch_count; ++i) {
     // TODO(paruzelp): copies the input buffer regardless - inconsistency
     //                 with the other kernels
-    std::copy_n(x_data, x_size, x_out_data);
-    if (is_finite(x_out_data, x_size)) {
-      fn(&compute_left_v, &compute_right_v, &x_order_v, x_out_data, &x_order_v,
-         eigvals_real_data, eigvals_imag_data, eigvecs_left_data, &x_order_v,
-         eigvecs_right_data, &x_order_v, work_data, &work_size_v, info_data);
-      ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(x_out_data, x_size_bytes);
+    std::copy_n(x_data, x_size, x_work_data);
+    if (is_finite(x_work_data, x_size)) {
+      fn(&compute_left_v, &compute_right_v, &x_order_v, x_work_data, &x_order_v,
+         eigvals_real_data, eigvals_imag_data, work_eigvecs_left_data, &x_order_v,
+         work_eigvecs_right_data, &x_order_v, work_data, &work_size_v, info_data);
+      ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(x_work_data, x_size_bytes);
       ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(eigvals_real_data, x_cols_bytes);
       ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(eigvals_imag_data, x_cols_bytes);
-      ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(eigvecs_left_data, x_size_bytes);
-      ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(eigvecs_right_data, x_size_bytes);
+      ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(work_eigvecs_left_data, x_size_bytes);
+      ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(work_eigvecs_right_data, x_size_bytes);
       ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(info_data, sizeof(lapack_int));
       if (info_data[0] == 0) {
-        UnpackEigenvectors(x_order_v, eigvals_imag_data, eigvecs_left_data,
-                           eigvecs_left_out->data);
-        UnpackEigenvectors(x_order_v, eigvals_imag_data, eigvecs_right_data,
-                           eigvecs_right_out->data);
+        UnpackEigenvectors(x_order_v, eigvals_imag_data, work_eigvecs_left_data,
+                           eigvecs_left_data);
+        UnpackEigenvectors(x_order_v, eigvals_imag_data, work_eigvecs_right_data,
+                           eigvecs_right_data);
       }
     } else {
       info_data[0] = -4;
@@ -703,19 +727,19 @@ ffi::Error EigenvalueDecomposition<dtype>::Kernel(
 template <ffi::DataType dtype>
 ffi::Error EigenvalueDecompositionComplex<dtype>::Kernel(
     ffi::Buffer<dtype> x, eig::ComputationMode compute_left,
-    eig::ComputationMode compute_right, ffi::ResultBuffer<dtype> x_out,
+    eig::ComputationMode compute_right,
     ffi::ResultBuffer<dtype> eigvals, ffi::ResultBuffer<dtype> eigvecs_left,
     ffi::ResultBuffer<dtype> eigvecs_right,
-    ffi::ResultBuffer<ffi::ToReal(dtype)> rwork,
-    ffi::ResultBuffer<LapackIntDtype> info) {
-  auto [batch_count, x_rows, x_cols] = SplitBatchDims(x.dimensions);
-  if (x_rows != x_cols) {
+    ffi::ResultBuffer<LapackIntDtype> info,
+    ffi::ResultBuffer<dtype> x_work,
+    ffi::ResultBuffer<ffi::ToReal(dtype)> rwork) {
+  auto [batch_count, x_rows, x_cols] = SplitBatch2D(x.dimensions);
+  if (x_rows != x_cols) [[unlikely]] {
     throw std::invalid_argument(
         "Eigenvalue decomposition requires a square matrix");
   }
-
   const auto* x_data = x.data;
-  auto* x_out_data = x_out->data;
+  auto* x_work_data = x_work->data;
   auto* eigvecs_left_data = eigvecs_left->data;
   auto* eigvecs_right_data = eigvecs_right->data;
   auto* eigvals_data = eigvals->data;
@@ -743,12 +767,12 @@ ffi::Error EigenvalueDecompositionComplex<dtype>::Kernel(
   [[maybe_unused]] const auto x_cols_bytes =
       static_cast<unsigned long>(x_cols) * sizeof(ValueType);
   for (int64_t i = 0; i < batch_count; ++i) {
-    std::copy_n(x_data, x_size, x_out_data);
-    if (is_finite(x_out_data, x_size)) {
-      fn(&compute_left_v, &compute_right_v, &x_order_v, x_out_data, &x_order_v,
+    std::copy_n(x_data, x_size, x_work_data);
+    if (is_finite(x_work_data, x_size)) {
+      fn(&compute_left_v, &compute_right_v, &x_order_v, x_work_data, &x_order_v,
          eigvals_data, eigvecs_left_data, &x_order_v, eigvecs_right_data,
          &x_order_v, work_data, &work_size_v, rwork->data, info_data);
-      ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(x_out_data, x_size_bytes);
+      ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(x_work_data, x_size_bytes);
       ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(eigvals_data, x_cols_bytes);
       ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(eigvecs_left_data, x_size_bytes);
       ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(eigvecs_right_data, x_size_bytes);
@@ -788,12 +812,13 @@ int64_t EigenvalueDecompositionComplex<dtype>::GetWorkspaceSize(
   ValueType optimal_size = {};
   lapack_int workspace_query = -1;
   lapack_int info = 0;
-
+  // NULL rwork crashes, LAPACK unnecessarily writes x_cols into rwork
+  RealType rwork[1];
   auto compute_left_v = static_cast<char>(compute_left);
   auto compute_right_v = static_cast<char>(compute_right);
   fn(&compute_left_v, &compute_right_v, &x_cols, nullptr, &x_cols, nullptr,
      nullptr, &x_cols, nullptr, &x_cols, &optimal_size, &workspace_query,
-     nullptr, &info);
+     rwork, &info);
   return info == 0 ? static_cast<int64_t>(std::real(optimal_size)) : -1;
 };
 
@@ -812,8 +837,8 @@ ffi::Error SchurDecomposition<dtype>::Kernel(
     // supplied. Hence, this parameter should always be zero. Is that necessary?
     ffi::ResultBuffer<LapackIntDtype> selected_eigval_dims,
     ffi::ResultBuffer<LapackIntDtype> info) {
-  auto [batch_count, x_rows, x_cols] = SplitBatchDims(x.dimensions);
-  if (x_rows != x_cols) {
+  auto [batch_count, x_rows, x_cols] = SplitBatch2D(x.dimensions);
+  if (x_rows != x_cols) [[unlikely]] {
     throw std::invalid_argument("Schur decomposition requires a square matrix");
   }
   if (sort != schur::Sort::kNoSortEigenvalues) {
@@ -876,10 +901,10 @@ ffi::Error SchurDecompositionComplex<dtype>::Kernel(
     ffi::ResultBuffer<dtype> x_out, ffi::ResultBuffer<dtype> eigvals,
     ffi::ResultBuffer<dtype> schur_vectors,
     ffi::ResultBuffer<LapackIntDtype> selected_eigval_dims,
-    ffi::ResultBuffer<ffi::ToReal(dtype)> rwork,
-    ffi::ResultBuffer<LapackIntDtype> info) {
-  auto [batch_count, x_rows, x_cols] = SplitBatchDims(x.dimensions);
-  if (x_rows != x_cols) {
+    ffi::ResultBuffer<LapackIntDtype> info,
+    ffi::ResultBuffer<ffi::ToReal(dtype)> rwork) {
+  auto [batch_count, x_rows, x_cols] = SplitBatch2D(x.dimensions);
+  if (x_rows != x_cols) [[unlikely]] {
     throw std::invalid_argument("Schur decomposition requires a square matrix");
   }
   if (sort != schur::Sort::kNoSortEigenvalues) {
@@ -973,9 +998,10 @@ template <ffi::DataType dtype>
 ffi::Error HessenbergDecomposition<dtype>::Kernel(
     ffi::Buffer<dtype> x, lapack_int low, lapack_int high,
     ffi::ResultBuffer<dtype> x_out, ffi::ResultBuffer<dtype> tau,
-    ffi::ResultBuffer<dtype> work, ffi::ResultBuffer<LapackIntDtype> info) {
-  auto [batch_count, x_rows, x_cols] = SplitBatchDims(x.dimensions);
-  if (x_rows != x_cols) {
+    ffi::ResultBuffer<LapackIntDtype> info,
+    ffi::ResultBuffer<dtype> work) {
+  auto [batch_count, x_rows, x_cols] = SplitBatch2D(x.dimensions);
+  if (x_rows != x_cols) [[unlikely]] {
     throw std::invalid_argument(
         "Hessenberg decomposition requires a square matrix");
   }
@@ -1026,9 +1052,10 @@ ffi::Error TridiagonalReduction<dtype>::Kernel(
     ffi::ResultBuffer<dtype> x_out, ffi::ResultBuffer<dtype> tau,
     ffi::ResultBuffer<ffi::ToReal(dtype)> diagonal,
     ffi::ResultBuffer<ffi::ToReal(dtype)> off_diagonal,
-    ffi::ResultBuffer<dtype> work, ffi::ResultBuffer<LapackIntDtype> info) {
-  auto [batch_count, x_rows, x_cols] = SplitBatchDims(x.dimensions);
-  if (x_rows != x_cols) {
+    ffi::ResultBuffer<LapackIntDtype> info,
+    ffi::ResultBuffer<dtype> work) {
+  auto [batch_count, x_rows, x_cols] = SplitBatch2D(x.dimensions);
+  if (x_rows != x_cols) [[unlikely]] {
     throw std::invalid_argument(
         "Tridiagonal reduction requires a square matrix");
   }

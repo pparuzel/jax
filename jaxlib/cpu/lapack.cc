@@ -47,22 +47,22 @@ using ::xla::ffi::DataType;
                              .Ret<ffi::Buffer<LapackIntDtype>>(/*ipiv*/) \
                              .Ret<ffi::Buffer<LapackIntDtype>>(/*info*/))
 
-#define JAX_CPU_DEFINE_GEQRF(name, data_type)                            \
-  XLA_FFI_DEFINE_HANDLER(name, QrFactorization<data_type>::Kernel,       \
-                         ffi::Ffi::Bind()                                \
-                             .Arg<ffi::Buffer<data_type>>(/*x*/)         \
-                             .Ret<ffi::Buffer<data_type>>(/*x_out*/)     \
-                             .Ret<ffi::Buffer<data_type>>(/*tau*/)       \
-                             .Ret<ffi::Buffer<LapackIntDtype>>(/*info*/) \
+#define JAX_CPU_DEFINE_GEQRF(name, data_type)                             \
+  XLA_FFI_DEFINE_HANDLER(name, QrFactorization<data_type>::Kernel,        \
+                         ffi::Ffi::Bind()                                 \
+                             .Arg<ffi::Buffer<data_type>>(/*x*/)          \
+                             .Ret<ffi::Buffer<data_type>>(/*x_out*/)      \
+                             .Ret<ffi::Buffer<data_type>>(/*tau*/)        \
+                             .Ret<ffi::Buffer<LapackIntDtype>>(/*info*/)  \
                              .Ret<ffi::Buffer<data_type>>(/*work*/))
 
-#define JAX_CPU_DEFINE_ORGQR(name, data_type)                            \
-  XLA_FFI_DEFINE_HANDLER(name, OrthogonalQr<data_type>::Kernel,          \
-                         ffi::Ffi::Bind()                                \
-                             .Arg<ffi::Buffer<data_type>>(/*x*/)         \
-                             .Arg<ffi::Buffer<data_type>>(/*tau*/)       \
-                             .Ret<ffi::Buffer<data_type>>(/*x_out*/)     \
-                             .Ret<ffi::Buffer<LapackIntDtype>>(/*info*/) \
+#define JAX_CPU_DEFINE_ORGQR(name, data_type)                             \
+  XLA_FFI_DEFINE_HANDLER(name, OrthogonalQr<data_type>::Kernel,           \
+                         ffi::Ffi::Bind()                                 \
+                             .Arg<ffi::Buffer<data_type>>(/*x*/)          \
+                             .Arg<ffi::Buffer<data_type>>(/*tau*/)        \
+                             .Ret<ffi::Buffer<data_type>>(/*x_out*/)      \
+                             .Ret<ffi::Buffer<LapackIntDtype>>(/*info*/)  \
                              .Ret<ffi::Buffer<data_type>>(/*work*/))
 
 #define JAX_CPU_DEFINE_POTRF(name, data_type)                            \
@@ -109,9 +109,9 @@ using ::xla::ffi::DataType;
                              .Attr<MatrixParams::UpLo>("uplo")                \
                              .Ret<ffi::Buffer<data_type>>(/*x_out*/)          \
                              .Ret<ffi::Buffer<data_type>>(/*eigenvalues*/)    \
+                             .Ret<ffi::Buffer<LapackIntDtype>>(/*info*/)      \
                              .Ret<ffi::Buffer<data_type>>(/*work*/)           \
                              .Ret<ffi::Buffer<LapackIntDtype>>(/*iwork*/)     \
-                             .Ret<ffi::Buffer<LapackIntDtype>>(/*info*/)      \
                              .Attr<eig::ComputationMode>("mode"))
 
 #define JAX_CPU_DEFINE_HEEVD(name, data_type)                        \
@@ -122,10 +122,10 @@ using ::xla::ffi::DataType;
           .Attr<MatrixParams::UpLo>("uplo")                          \
           .Ret<ffi::Buffer<data_type>>(/*x_out*/)                    \
           .Ret<ffi::Buffer<ffi::ToReal(data_type)>>(/*eigenvalues*/) \
+          .Ret<ffi::Buffer<LapackIntDtype>>(/*info*/)                \
           .Ret<ffi::Buffer<data_type>>(/*work*/)                     \
           .Ret<ffi::Buffer<ffi::ToReal(data_type)>>(/*rwork*/)       \
           .Ret<ffi::Buffer<LapackIntDtype>>(/*iwork*/)               \
-          .Ret<ffi::Buffer<LapackIntDtype>>(/*info*/)                \
           .Attr<eig::ComputationMode>("mode"))
 
 #define JAX_CPU_DEFINE_GEEV(name, data_type)                                  \
@@ -135,28 +135,28 @@ using ::xla::ffi::DataType;
           .Arg<ffi::Buffer<data_type>>(/*x*/)                                 \
           .Attr<eig::ComputationMode>("compute_left")                         \
           .Attr<eig::ComputationMode>("compute_right")                        \
-          .Ret<ffi::Buffer<data_type>>(/*x_out*/)                             \
           .Ret<ffi::Buffer<data_type>>(/*eigvals_real*/)                      \
           .Ret<ffi::Buffer<data_type>>(/*eigvals_imag*/)                      \
-          .Ret<ffi::Buffer<ffi::ToReal(data_type)>>(/*eigvecs_left*/)         \
-          .Ret<ffi::Buffer<ffi::ToReal(data_type)>>(/*eigvecs_right*/)        \
-          .Ret<ffi::Buffer<ffi::ToComplex(data_type)>>(/*eigvecs_left_out*/)  \
-          .Ret<ffi::Buffer<ffi::ToComplex(data_type)>>(/*eigvecs_right_out*/) \
-          .Ret<ffi::Buffer<LapackIntDtype>>(/*info*/))
+          .Ret<ffi::Buffer<ffi::ToComplex(data_type)>>(/*eigvecs_left*/)      \
+          .Ret<ffi::Buffer<ffi::ToComplex(data_type)>>(/*eigvecs_right*/)     \
+          .Ret<ffi::Buffer<LapackIntDtype>>(/*info*/)                         \
+          .Ret<ffi::Buffer<data_type>>(/*x_work*/)                            \
+          .Ret<ffi::Buffer<ffi::ToReal(data_type)>>(/*work_eigvecs_left*/)    \
+          .Ret<ffi::Buffer<ffi::ToReal(data_type)>>(/*work_eigvecs_right*/))
 
-#define JAX_CPU_DEFINE_GEEV_COMPLEX(name, data_type)           \
-  XLA_FFI_DEFINE_HANDLER(                                      \
-      name, EigenvalueDecompositionComplex<data_type>::Kernel, \
-      ffi::Ffi::Bind()                                         \
-          .Arg<ffi::Buffer<data_type>>(/*x*/)                  \
-          .Attr<eig::ComputationMode>("compute_left")          \
-          .Attr<eig::ComputationMode>("compute_right")         \
-          .Ret<ffi::Buffer<data_type>>(/*x_out*/)              \
-          .Ret<ffi::Buffer<data_type>>(/*eigvals*/)            \
-          .Ret<ffi::Buffer<data_type>>(/*eigvecs_left*/)       \
-          .Ret<ffi::Buffer<data_type>>(/*eigvecs_right*/)      \
-          .Ret<ffi::Buffer<ffi::ToReal(data_type)>>(/*rwork*/) \
-          .Ret<ffi::Buffer<LapackIntDtype>>(/*info*/))
+#define JAX_CPU_DEFINE_GEEV_COMPLEX(name, data_type)             \
+  XLA_FFI_DEFINE_HANDLER(                                        \
+      name, EigenvalueDecompositionComplex<data_type>::Kernel,   \
+      ffi::Ffi::Bind()                                           \
+          .Arg<ffi::Buffer<data_type>>(/*x*/)                    \
+          .Attr<eig::ComputationMode>("compute_left")            \
+          .Attr<eig::ComputationMode>("compute_right")           \
+          .Ret<ffi::Buffer<data_type>>(/*eigvals*/)              \
+          .Ret<ffi::Buffer<data_type>>(/*eigvecs_left*/)         \
+          .Ret<ffi::Buffer<data_type>>(/*eigvecs_right*/)        \
+          .Ret<ffi::Buffer<LapackIntDtype>>(/*info*/)            \
+          .Ret<ffi::Buffer<data_type>>(/*x_work*/)               \
+          .Ret<ffi::Buffer<ffi::ToReal(data_type)>>(/*rwork*/))
 
 #define JAX_CPU_DEFINE_GEES(name, data_type)                          \
   XLA_FFI_DEFINE_HANDLER(                                             \
@@ -183,8 +183,8 @@ using ::xla::ffi::DataType;
           .Ret<ffi::Buffer<data_type>>(/*eigvals*/)                   \
           .Ret<ffi::Buffer<data_type>>(/*schur_vectors*/)             \
           .Ret<ffi::Buffer<LapackIntDtype>>(/*selected_eigval_dims*/) \
-          .Ret<ffi::Buffer<ffi::ToReal(data_type)>>(/*rwork*/)        \
-          .Ret<ffi::Buffer<LapackIntDtype>>(/*info*/))
+          .Ret<ffi::Buffer<LapackIntDtype>>(/*info*/)                 \
+          .Ret<ffi::Buffer<ffi::ToReal(data_type)>>(/*rwork*/))
 
 #define JAX_CPU_DEFINE_GEHRD(name, data_type)                              \
   XLA_FFI_DEFINE_HANDLER(name, HessenbergDecomposition<data_type>::Kernel, \
@@ -194,8 +194,8 @@ using ::xla::ffi::DataType;
                              .Attr<lapack_int>("high")                     \
                              .Ret<ffi::Buffer<data_type>>(/*x_out*/)       \
                              .Ret<ffi::Buffer<data_type>>(/*tau*/)         \
-                             .Ret<ffi::Buffer<data_type>>(/*work*/)        \
-                             .Ret<ffi::Buffer<LapackIntDtype>>(/*info*/))
+                             .Ret<ffi::Buffer<LapackIntDtype>>(/*info*/)   \
+                             .Ret<ffi::Buffer<data_type>>(/*work*/))
 
 #define JAX_CPU_DEFINE_SYTRD_HETRD(name, data_type)                   \
   XLA_FFI_DEFINE_HANDLER(                                             \
@@ -207,8 +207,8 @@ using ::xla::ffi::DataType;
           .Ret<ffi::Buffer<data_type>>(/*tau*/)                       \
           .Ret<ffi::Buffer<ffi::ToReal(data_type)>>(/*diagonal*/)     \
           .Ret<ffi::Buffer<ffi::ToReal(data_type)>>(/*off_diagonal*/) \
-          .Ret<ffi::Buffer<data_type>>(/*work*/)                      \
-          .Ret<ffi::Buffer<LapackIntDtype>>(/*info*/))
+          .Ret<ffi::Buffer<LapackIntDtype>>(/*info*/)                 \
+          .Ret<ffi::Buffer<data_type>>(/*work*/))
 
 // FFI Handlers
 
@@ -358,14 +358,10 @@ void GetLapackKernelsFromScipy() {
   AssignKernelFn<CholeskyFactorization<DataType::C64>>(lapack_ptr("cpotrf"));
   AssignKernelFn<CholeskyFactorization<DataType::C128>>(lapack_ptr("zpotrf"));
 
-  AssignKernelFn<SingularValueDecomposition<DataType::F32>>(
-      lapack_ptr("sgesdd"));
-  AssignKernelFn<SingularValueDecomposition<DataType::F64>>(
-      lapack_ptr("dgesdd"));
-  AssignKernelFn<SingularValueDecompositionComplex<DataType::C64>>(
-      lapack_ptr("cgesdd"));
-  AssignKernelFn<SingularValueDecompositionComplex<DataType::C128>>(
-      lapack_ptr("zgesdd"));
+  AssignKernelFn<svd::SVDType<DataType::F32>>(lapack_ptr("sgesdd"));
+  AssignKernelFn<svd::SVDType<DataType::F64>>(lapack_ptr("dgesdd"));
+  AssignKernelFn<svd::SVDType<DataType::C64>>(lapack_ptr("cgesdd"));
+  AssignKernelFn<svd::SVDType<DataType::C128>>(lapack_ptr("zgesdd"));
 
   AssignKernelFn<EigenvalueDecompositionSymmetric<DataType::F32>>(
       lapack_ptr("ssyevd"));
@@ -378,16 +374,13 @@ void GetLapackKernelsFromScipy() {
 
   AssignKernelFn<EigenvalueDecomposition<DataType::F32>>(lapack_ptr("sgeev"));
   AssignKernelFn<EigenvalueDecomposition<DataType::F64>>(lapack_ptr("dgeev"));
-  AssignKernelFn<EigenvalueDecompositionComplex<DataType::C64>>(
-      lapack_ptr("cgeev"));
-  AssignKernelFn<EigenvalueDecompositionComplex<DataType::C128>>(
-      lapack_ptr("zgeev"));
+  AssignKernelFn<EigenvalueDecompositionComplex<DataType::C64>>(lapack_ptr("cgeev"));
+  AssignKernelFn<EigenvalueDecompositionComplex<DataType::C128>>(lapack_ptr("zgeev"));
 
   AssignKernelFn<SchurDecomposition<DataType::F32>>(lapack_ptr("sgees"));
   AssignKernelFn<SchurDecomposition<DataType::F64>>(lapack_ptr("dgees"));
   AssignKernelFn<SchurDecompositionComplex<DataType::C64>>(lapack_ptr("cgees"));
-  AssignKernelFn<SchurDecompositionComplex<DataType::C128>>(
-      lapack_ptr("zgees"));
+  AssignKernelFn<SchurDecompositionComplex<DataType::C128>>(lapack_ptr("zgees"));
 
   AssignKernelFn<HessenbergDecomposition<DataType::F32>>(lapack_ptr("sgehrd"));
   AssignKernelFn<HessenbergDecomposition<DataType::F64>>(lapack_ptr("dgehrd"));
@@ -456,8 +449,20 @@ nb::dict Registrations() {
 NB_MODULE(_lapack, m) {
   // Populates the LAPACK kernels from scipy on first call.
   m.def("initialize", GetLapackKernelsFromScipy);
-
   m.def("registrations", &Registrations);
+  // Submodules
+  auto svd = m.def_submodule("svd");
+  auto eig = m.def_submodule("eig");
+  // Enums
+  nb::enum_<svd::ComputationMode>(svd, "ComputationMode")
+    // kComputeVtOverwriteXPartialU is not implemented
+    .value("kComputeFullUVt", svd::ComputationMode::kComputeFullUVt)
+    .value("kComputeMinUVt", svd::ComputationMode::kComputeMinUVt)
+    .value("kNoComputeUVt", svd::ComputationMode::kNoComputeUVt);
+  nb::enum_<eig::ComputationMode>(eig, "ComputationMode")
+    .value("kComputeEigenvectors", eig::ComputationMode::kComputeEigenvectors)
+    .value("kNoEigenvectors", eig::ComputationMode::kNoEigenvectors);
+
   m.def("lapack_sgeqrf_workspace",
         &QrFactorization<DataType::F32>::GetWorkspaceSize, nb::arg("m"),
         nb::arg("n"));
@@ -484,22 +489,22 @@ NB_MODULE(_lapack, m) {
         nb::arg("n"), nb::arg("k"));
   m.def("gesdd_iwork_size", &svd::GetIntWorkspaceSize, nb::arg("m"),
         nb::arg("n"));
-  m.def("sgesdd_work_size", &GesddGetWorkspaceSize<DataType::F32>, nb::arg("m"),
-        nb::arg("n"), nb::arg("job_opt_compute_uv"),
-        nb::arg("job_opt_full_matrices"));
-  m.def("dgesdd_work_size", &GesddGetWorkspaceSize<DataType::F64>, nb::arg("m"),
-        nb::arg("n"), nb::arg("job_opt_compute_uv"),
-        nb::arg("job_opt_full_matrices"));
-  // TODO(paruzelp): Rename to gesdd_rwork_size or supply all types
-  m.def("cgesdd_rwork_size", &GesddGetRealWorkspaceSize, nb::arg("m"),
-        nb::arg("n"), nb::arg("compute_uv"));
-  m.def("cgesdd_work_size", &GesddGetWorkspaceSize<DataType::C64>, nb::arg("m"),
-        nb::arg("n"), nb::arg("job_opt_compute_uv"),
-        nb::arg("job_opt_full_matrices"));
-  m.def("zgesdd_work_size", &GesddGetWorkspaceSize<DataType::C128>,
-        nb::arg("m"), nb::arg("n"), nb::arg("job_opt_compute_uv"),
-        nb::arg("job_opt_full_matrices"));
-  m.def("syevd_work_size", BoundWithEigvecs<eig::GetIntWorkspaceSize>,
+  m.def("sgesdd_work_size",
+        &svd::SVDType<DataType::F32>::GetWorkspaceSize, nb::arg("m"),
+        nb::arg("n"), nb::arg("mode"));
+  m.def("dgesdd_work_size",
+        &svd::SVDType<DataType::F64>::GetWorkspaceSize, nb::arg("m"),
+        nb::arg("n"), nb::arg("mode"));
+  m.def("gesdd_rwork_size",
+        &svd::GetRealWorkspaceSize, nb::arg("m"), nb::arg("n"),
+        nb::arg("mode"));
+  m.def("cgesdd_work_size",
+        &svd::SVDType<DataType::C64>::GetWorkspaceSize, nb::arg("m"),
+        nb::arg("n"), nb::arg("mode"));
+  m.def("zgesdd_work_size",
+        &svd::SVDType<DataType::C128>::GetWorkspaceSize, nb::arg("m"),
+        nb::arg("n"), nb::arg("mode"));
+  m.def("syevd_work_size", BoundWithEigvecs<eig::GetWorkspaceSize>,
         nb::arg("n"));
   m.def("syevd_iwork_size", BoundWithEigvecs<eig::GetIntWorkspaceSize>,
         nb::arg("n"));
