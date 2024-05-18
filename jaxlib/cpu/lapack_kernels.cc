@@ -110,7 +110,7 @@ namespace jax {
 
 template <ffi::DataType dtype>
 ffi::Error TriMatrixEquationSolver<dtype>::Kernel(
-    ffi::Buffer<dtype> x, ffi::Buffer<dtype> y, ::xla::ffi::Buffer<dtype> alpha,
+    ffi::Buffer<dtype> x, ffi::Buffer<dtype> y, ffi::BufferR0<dtype> alpha,
     ffi::ResultBuffer<dtype> y_out, MatrixParams::Side side,
     MatrixParams::UpLo uplo, MatrixParams::Transpose trans_x,
     MatrixParams::Diag diag) {
@@ -834,8 +834,8 @@ ffi::Error SchurDecomposition<dtype>::Kernel(
     ffi::ResultBuffer<dtype> eigvals_imag,
     ffi::ResultBuffer<dtype> schur_vectors,
     // TODO(paruzelp): Sort is not implemented because select function is not
-    // supplied. Hence, this parameter should always be zero. Is that necessary?
-    ffi::ResultBuffer<LapackIntDtype> selected_eigval_dims,
+    // supplied. For that reason, this parameter will always be zero!
+    ffi::ResultBuffer<LapackIntDtype> selected_eigvals,
     ffi::ResultBuffer<LapackIntDtype> info) {
   auto [batch_count, x_rows, x_cols] = SplitBatch2D(x.dimensions);
   if (x_rows != x_cols) [[unlikely]] {
@@ -848,13 +848,13 @@ ffi::Error SchurDecomposition<dtype>::Kernel(
 
   CopyIfDiffBuffer(x, x_out);
 
-  // TODO(paruzelp): `select` should be passed from the parameters
+  // TODO(paruzelp): `select` should be passed as an execution context
   bool (*select)(ValueType, ValueType) = nullptr;
   ValueType* x_out_data = x_out->data;
   ValueType* eigvals_real_data = eigvals_real->data;
   ValueType* eigvals_imag_data = eigvals_imag->data;
   ValueType* schur_vectors_data = schur_vectors->data;
-  lapack_int* sev_dims_data = selected_eigval_dims->data;
+  lapack_int* selected_data = selected_eigvals->data;
   lapack_int* info_data = info->data;
 
   auto mode_v = static_cast<char>(mode);
@@ -875,10 +875,10 @@ ffi::Error SchurDecomposition<dtype>::Kernel(
       static_cast<unsigned long>(x_cols) * sizeof(ValueType);
   for (int64_t i = 0; i < batch_count; ++i) {
     fn(&mode_v, &sort_v, select, &x_order_v, x_out_data, &x_order_v,
-       sev_dims_data, eigvals_real_data, eigvals_imag_data, schur_vectors_data,
+       selected_data, eigvals_real_data, eigvals_imag_data, schur_vectors_data,
        &x_order_v, work.get(), &work_size_v, bwork.get(), info_data);
     ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(x_out_data, x_size_bytes);
-    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(sev_dims_data, sizeof(lapack_int));
+    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(selected_data, sizeof(lapack_int));
     ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(eigvals_real_data, x_cols_bytes);
     ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(eigvals_imag_data, x_cols_bytes);
     ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(schur_vectors_data, x_size_bytes);
@@ -888,7 +888,7 @@ ffi::Error SchurDecomposition<dtype>::Kernel(
     eigvals_real_data += x_cols;
     eigvals_imag_data += x_cols;
     schur_vectors_data += x_size;
-    ++sev_dims_data;
+    ++selected_data;
     ++info_data;
   }
 
@@ -900,7 +900,7 @@ ffi::Error SchurDecompositionComplex<dtype>::Kernel(
     ffi::Buffer<dtype> x, schur::ComputationMode mode, schur::Sort sort,
     ffi::ResultBuffer<dtype> x_out, ffi::ResultBuffer<dtype> eigvals,
     ffi::ResultBuffer<dtype> schur_vectors,
-    ffi::ResultBuffer<LapackIntDtype> selected_eigval_dims,
+    ffi::ResultBuffer<LapackIntDtype> selected_eigvals,
     ffi::ResultBuffer<LapackIntDtype> info,
     ffi::ResultBuffer<ffi::ToReal(dtype)> rwork) {
   auto [batch_count, x_rows, x_cols] = SplitBatch2D(x.dimensions);
@@ -909,7 +909,8 @@ ffi::Error SchurDecompositionComplex<dtype>::Kernel(
   }
   if (sort != schur::Sort::kNoSortEigenvalues) {
     throw std::runtime_error(
-        "Ordering eigenvalues on the diagonal is not implemented");
+        "Ordering eigenvalues on the diagonal is not yet implemented."
+        "It requires `select` function to be provided.");
   }
 
   CopyIfDiffBuffer(x, x_out);
@@ -920,7 +921,7 @@ ffi::Error SchurDecompositionComplex<dtype>::Kernel(
   ValueType* eigvals_data = eigvals->data;
   ValueType* schur_vectors_data = schur_vectors->data;
   RealType* rwork_data = rwork->data;
-  lapack_int* sev_dims_data = selected_eigval_dims->data;
+  lapack_int* selected_data = selected_eigvals->data;
   lapack_int* info_data = info->data;
 
   auto mode_v = static_cast<char>(mode);
@@ -941,17 +942,17 @@ ffi::Error SchurDecompositionComplex<dtype>::Kernel(
       static_cast<unsigned long>(x_cols) * sizeof(ValueType);
   for (int64_t i = 0; i < batch_count; ++i) {
     fn(&mode_v, &sort_v, select, &x_order_v, x_out_data, &x_order_v,
-       sev_dims_data, eigvals_data, schur_vectors_data, &x_order_v, work.get(),
+       selected_data, eigvals_data, schur_vectors_data, &x_order_v, work.get(),
        &work_size_v, rwork_data, bwork.get(), info_data);
     ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(eigvals_data, x_cols_bytes);
     ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(schur_vectors_data, x_size_bytes);
     ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(info_data, sizeof(lapack_int));
-    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(sev_dims_data, sizeof(lapack_int));
+    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(selected_data, sizeof(lapack_int));
 
     x_out_data += x_size;
     eigvals_data += x_cols;
     schur_vectors_data += x_size;
-    ++sev_dims_data;
+    ++selected_data;
     ++info_data;
   }
 
@@ -1075,13 +1076,14 @@ ffi::Error TridiagonalReduction<dtype>::Kernel(
   auto x_order_v = CastNoOverflow<lapack_int>(x_cols);
 
   int64_t x_size = {static_cast<int64_t>(x_leading_dim_v) * x_cols};
+  int64_t tau_step = {tau->dimensions.back()};
   for (int64_t i = 0; i < batch_count; ++i) {
     fn(&uplo_v, &x_order_v, x_out_data, &x_leading_dim_v, diagonal_data,
        off_diagonal_data, tau_data, work_data, &workspace_dim_v, info_data);
     x_out_data += x_size;
     diagonal_data += x_cols;
     off_diagonal_data += x_cols - 1;
-    tau_data += x_cols - 1;
+    tau_data += tau_step;
     ++info_data;
   }
   return ffi::Error::Success();

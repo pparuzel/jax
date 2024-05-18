@@ -123,7 +123,7 @@ struct TriMatrixEquationSolver {
   inline static FnType* fn = nullptr;
   static ::xla::ffi::Error Kernel(
       ::xla::ffi::Buffer<dtype> x, ::xla::ffi::Buffer<dtype> y,
-      ::xla::ffi::Buffer<dtype> alpha, ::xla::ffi::ResultBuffer<dtype> y_out,
+      ::xla::ffi::BufferR0<dtype> alpha, ::xla::ffi::ResultBuffer<dtype> y_out,
       MatrixParams::Side side, MatrixParams::UpLo uplo,
       MatrixParams::Transpose trans_x, MatrixParams::Diag diag);
 };
@@ -411,7 +411,7 @@ struct SchurDecomposition {
       ::xla::ffi::ResultBuffer<dtype> eigvals_real,
       ::xla::ffi::ResultBuffer<dtype> eigvals_imag,
       ::xla::ffi::ResultBuffer<dtype> schur_vectors,
-      ::xla::ffi::ResultBuffer<LapackIntDtype> selected_eigval_dims,
+      ::xla::ffi::ResultBuffer<LapackIntDtype> selected_eigvals,
       ::xla::ffi::ResultBuffer<LapackIntDtype> info);
 
   static int64_t GetWorkspaceSize(lapack_int x_cols,
@@ -436,7 +436,7 @@ struct SchurDecompositionComplex {
       schur::Sort sort, ::xla::ffi::ResultBuffer<dtype> x_out,
       ::xla::ffi::ResultBuffer<dtype> eigvals,
       ::xla::ffi::ResultBuffer<dtype> schur_vectors,
-      ::xla::ffi::ResultBuffer<LapackIntDtype> selected_eigval_dims,
+      ::xla::ffi::ResultBuffer<LapackIntDtype> selected_eigvals,
       ::xla::ffi::ResultBuffer<LapackIntDtype> info,
       ::xla::ffi::ResultBuffer<::xla::ffi::ToReal(dtype)> rwork);
 

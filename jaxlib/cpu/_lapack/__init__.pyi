@@ -14,6 +14,7 @@
 
 import eig as eig
 import svd as svd
+import schur as schur
 
 def cgesdd_work_size(m: int, n: int, mode: svd.ComputationMode) -> int: ...
 def dgesdd_work_size(m: int, n: int, mode: svd.ComputationMode) -> int: ...

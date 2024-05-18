@@ -32,7 +32,7 @@ using ::xla::ffi::DataType;
                          ffi::Ffi::Bind()                                  \
                              .Arg<ffi::Buffer<data_type>>(/*x*/)           \
                              .Arg<ffi::Buffer<data_type>>(/*y*/)           \
-                             .Arg<ffi::Buffer<data_type>>(/*alpha*/)       \
+                             .Arg<ffi::BufferR0<data_type>>(/*alpha*/)     \
                              .Ret<ffi::Buffer<data_type>>(/*y_out*/)       \
                              .Attr<MatrixParams::Side>("side")             \
                              .Attr<MatrixParams::UpLo>("uplo")             \
@@ -169,7 +169,7 @@ using ::xla::ffi::DataType;
           .Ret<ffi::Buffer<data_type>>(/*eigvals_real*/)              \
           .Ret<ffi::Buffer<data_type>>(/*eigvals_imag*/)              \
           .Ret<ffi::Buffer<data_type>>(/*schur_vectors*/)             \
-          .Ret<ffi::Buffer<LapackIntDtype>>(/*selected_eigval_dims*/) \
+          .Ret<ffi::Buffer<LapackIntDtype>>(/*selected_eigvals*/)     \
           .Ret<ffi::Buffer<LapackIntDtype>>(/*info*/))
 
 #define JAX_CPU_DEFINE_GEES_COMPLEX(name, data_type)                  \
@@ -182,7 +182,7 @@ using ::xla::ffi::DataType;
           .Ret<ffi::Buffer<data_type>>(/*x_out*/)                     \
           .Ret<ffi::Buffer<data_type>>(/*eigvals*/)                   \
           .Ret<ffi::Buffer<data_type>>(/*schur_vectors*/)             \
-          .Ret<ffi::Buffer<LapackIntDtype>>(/*selected_eigval_dims*/) \
+          .Ret<ffi::Buffer<LapackIntDtype>>(/*selected_eigvals*/)     \
           .Ret<ffi::Buffer<LapackIntDtype>>(/*info*/)                 \
           .Ret<ffi::Buffer<ffi::ToReal(data_type)>>(/*rwork*/))
 
@@ -453,6 +453,7 @@ NB_MODULE(_lapack, m) {
   // Submodules
   auto svd = m.def_submodule("svd");
   auto eig = m.def_submodule("eig");
+  auto schur = m.def_submodule("schur");
   // Enums
   nb::enum_<svd::ComputationMode>(svd, "ComputationMode")
     // kComputeVtOverwriteXPartialU is not implemented
@@ -462,6 +463,12 @@ NB_MODULE(_lapack, m) {
   nb::enum_<eig::ComputationMode>(eig, "ComputationMode")
     .value("kComputeEigenvectors", eig::ComputationMode::kComputeEigenvectors)
     .value("kNoEigenvectors", eig::ComputationMode::kNoEigenvectors);
+  nb::enum_<schur::ComputationMode>(schur, "ComputationMode")
+    .value("kNoComputeSchurVectors", schur::ComputationMode::kNoComputeSchurVectors)
+    .value("kComputeSchurVectors", schur::ComputationMode::kComputeSchurVectors);
+  nb::enum_<schur::Sort>(schur, "Sort")
+    .value("kNoSortEigenvalues", schur::Sort::kNoSortEigenvalues)
+    .value("kSortEigenvalues", schur::Sort::kSortEigenvalues);
 
   m.def("lapack_sgeqrf_workspace",
         &QrFactorization<DataType::F32>::GetWorkspaceSize, nb::arg("m"),
